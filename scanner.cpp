@@ -6,6 +6,8 @@
 #include <stddef.h>
 #include "bcm2835.h"
 
+#include <iostream>
+
 //SPI receive buffer (payload max 32 bytes)
 uint8_t spi_rxbuff[32] ;
 //SPI transmit buffer (payload max 32 bytes + 1 byte )
@@ -120,11 +122,11 @@ byte * getAddress(byte * address_buf,byte typ,byte number_of_bytes)
 
 void printConfig()
 {
-    printf("%#04x\n",getRegister(_NRF24_CONFIG));
+    printf("Config: %#04x\n",getRegister(_NRF24_CONFIG));
 }
 void printStatus()
 {
-    printf("%#04x\n",getRegister(_NRF24_CONFIG));
+    printf("Status: %#04x\n",getStatus());
 }
 
 
@@ -161,11 +163,17 @@ void setup()
   powerUp();
   
   // switch off Shockburst
-  setRegister(_NRF24_EN_AA,0x0);
+  //setRegister(_NRF24_EN_AA,0x0);
   
   // make sure RF-section is set properly 
   // - just write default value... 
-  setRegister(_NRF24_RF_SETUP,0x0F); 
+  //setRegister(_NRF24_RF_SETUP,0x0F);
+
+  printConfig();
+
+  printStatus();
+
+  std::cout << "hej cout" << std::endl;
 
 
   
