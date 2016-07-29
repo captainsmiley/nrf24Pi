@@ -11,7 +11,9 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
-#include "bcm2835.h"
+//#include "bcm2835.h"
+#include <wiringPi.h>
+#include <wiringPiSPI.h>
 
 #include <iostream>
 #include <string>
@@ -51,11 +53,17 @@
 #define R_REGISTER    0x00
 #define REGISTER_MASK 0x1F
 #define W_REGISTER    0x20
+#define FLUSH_TX	  0xE1
+#define FLUSH_RX	  0xE2
 
 
+
+
+void nrf24_int_handler();
 
 class nrf24 {
 public:
+	enum Mode { RX, TX, OFF };
 	nrf24();
 	void printStatus();
 	virtual ~nrf24();
@@ -64,7 +72,13 @@ public:
 	uint8_t getStatus();
 	void readFIFO(byte * buff, uint8_t nr_bytes);
 	void clearInt_RX_DR();
+	void setup(Mode mode);
+	void flushRx();
+	void flushTx();
 private:
+
+	void setupRx();
+	void irq_callback();
 	byte getRegister(uint8_t reg);
 	void setRegister(uint8_t reg, uint8_t value);
 	void printConfig();
@@ -82,12 +96,15 @@ private:
 
 	std::string getRegName(uint8_t reg);
 
-	//SPI receive buffer (payload max 32 bytes)
-	uint8_t spi_rxbuff[32] ;
-	//SPI transmit buffer (payload max 32 bytes + 1 byte )
-	uint8_t spi_txbuff[32+1] ;
-	uint8_t ce_pin =RPI_V2_GPIO_P1_22 ; //25
-	uint8_t csn_pin =RPI_V2_GPIO_P1_24 ; //8
+	//SPI buffer (payload max 32 bytes)
+	uint8_t spi_buff[33] ;
+	uint8_t ce_pin = 6; //25
+	uint8_t csn_pin =10 ; //8
+protected:
+	static nrf24 * active_nrf24;
+
+	friend void nrf24_int_handler();
 };
+
 
 #endif /* NRF24_H_ */

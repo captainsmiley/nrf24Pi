@@ -12,26 +12,38 @@ nrf24::nrf24() {
 
 	std::cout << "Running nrf24 constructor" << std::endl;
 
-	// Setup GPIO
-	  bcm2835_init();
 
-	  // Activate Chip Enable
-	  bcm2835_gpio_fsel(ce_pin, BCM2835_GPIO_FSEL_OUTP);
-	  bcm2835_gpio_fsel(csn_pin, BCM2835_GPIO_FSEL_OUTP);
-	  bcm2835_gpio_write(ce_pin, LOW);
-	  bcm2835_gpio_write(csn_pin, HIGH);
 
-	  // Setup SPI
-	  bcm2835_spi_setBitOrder(BCM2835_SPI_BIT_ORDER_MSBFIRST);
-	  bcm2835_spi_setDataMode(BCM2835_SPI_MODE0);
 
-	  // Set SPI bus Speed
-	  bcm2835_spi_setClockSpeed(BCM2835_SPI_SPEED_1MHZ);
-	  // This initialize the SPI bus with
-	  // csn pin as chip select (custom or not)
-	  bcm2835_spi_begin(csn_pin);
-	  delay(100);
-	  ceLow();
+}
+
+nrf24::~nrf24() {
+	// TODO Auto-generated destructor stub
+}
+
+void nrf24::setup(Mode mode)
+{
+	//wiringPiSetup () ;
+	wiringPiSPISetup (0, 2000000);
+	pinMode(csn_pin,OUTPUT);
+	pinMode(ce_pin,OUTPUT);
+	digitalWrite (ce_pin, LOW);
+	digitalWrite (csn_pin, HIGH);
+
+	switch (mode)
+	{
+	case RX:
+		setupRx();
+		break;
+	default:
+		std::cout << "Invalid mode" << std::endl;
+		break;
+	}
+
+}
+
+void nrf24::setupRx()
+{
 
 	powerUp();
 	setRegister(_NRF24_CONFIG,0b11);
@@ -51,18 +63,21 @@ nrf24::nrf24() {
 	printRegister(_NRF24_RF_CH);
 	printRegister(_NRF24_RF_SETUP);
 	printRegister(_NRF24_STATUS);
+	std::bitset<8> x(getStatus());
+	std::cout << "Fast ststus gives: " << x << std::endl;
 	printRegister(_NRF24_FIFO_STATUS);
 	printAddresses();
 
+
+	active_nrf24 =  this;
+	wiringPiISR (0, INT_EDGE_FALLING,  &nrf24_int_handler) ;
+
 	ceHigh();
 
-
-
 }
 
-nrf24::~nrf24() {
-	// TODO Auto-generated destructor stub
-}
+nrf24 * nrf24::active_nrf24 = 0;
+
 
 std::string nrf24::getRegName(uint8_t reg)
 {
@@ -96,18 +111,60 @@ std::string nrf24::getRegName(uint8_t reg)
 
 void nrf24::readFIFO(byte * buff, uint8_t nr_bytes)
 {
-	uint8_t * prx = spi_rxbuff;
-	uint8_t * ptx = spi_txbuff;
-	*ptx++ = ( R_RX_PAYLOAD );
-	for(int i=0; i<nr_bytes;++i) *ptx++ = NOP ; // Dummy operation
-	bcm2835_gpio_write(csn_pin, LOW);
-	bcm2835_spi_transfernb( (char *) spi_txbuff, (char *) spi_rxbuff, nr_bytes+1);
-	bcm2835_gpio_write(csn_pin,HIGH);
+	uint8_t * p = spi_buff;
+	*p++ = ( R_RX_PAYLOAD );
+	for(int i=0; i<nr_bytes;++i) *p++ = NOP ; // Dummy operation
+	digitalWrite(csn_pin,LOW);
+	wiringPiSPIDataRW (0, spi_buff, nr_bytes+1);
+	digitalWrite(csn_pin,HIGH);
 	for(int i=0; i<nr_bytes; ++i)
 	{
-		*(buff+i) = *(prx+1+i);
+		*(buff+i) = *(spi_buff+1+i);
 	}
 
+}
+
+void nrf24::flushRx()
+{
+	*spi_buff = FLUSH_RX;
+	digitalWrite(csn_pin,LOW);
+	wiringPiSPIDataRW (0, spi_buff, 1);
+	digitalWrite(csn_pin,HIGH);
+}
+void nrf24::flushTx()
+{
+	*spi_buff = FLUSH_TX;
+	digitalWrite(csn_pin,LOW);
+	wiringPiSPIDataRW (0, spi_buff, 1);
+	digitalWrite(csn_pin,HIGH);
+}
+
+//nrf24 * active_nrf;
+void nrf24_int_handler()
+{
+	//std::cout << "int handler exe" << std::endl;
+	nrf24::active_nrf24->irq_callback();
+}
+
+void nrf24::irq_callback()
+{
+	delay(1);
+	ceLow();
+	if(getStatus() & 0b01000000)
+	{
+		byte a[32] = {};
+		readFIFO(&a[1],1);
+		std::cout << a[1] << std::flush;
+		/*
+			r.readFIFO(&a[1],1);
+			std::cout << "Received: " << a[1] << std::endl;
+			r.readFIFO(a,1);
+			std::cout << "Received: " << a[1] << std::endl;
+		 */
+		clearInt_RX_DR();
+		//printStatus();
+	}
+	ceHigh();
 }
 
 void nrf24::clearInt_RX_DR()
@@ -115,40 +172,41 @@ void nrf24::clearInt_RX_DR()
 	setRegister(_NRF24_STATUS,(getStatus() | 0b01000000 ));
 }
 
-
 // get the value of a nRF24L01p register
-byte nrf24::getRegister(uint8_t reg)
+uint8_t nrf24::getRegister(uint8_t reg)
 {
 uint8_t result;
-  uint8_t * prx = spi_rxbuff;
-  uint8_t * ptx = spi_txbuff;
-  *ptx++ = ( R_REGISTER | ( REGISTER_MASK & reg ) );
-  *ptx = NOP ; // Dummy operation, just for reading
-  bcm2835_gpio_write(csn_pin, LOW);
-  bcm2835_spi_transfernb( (char *) spi_txbuff, (char *) spi_rxbuff, 2);
-  bcm2835_gpio_write(csn_pin,HIGH);
-  result = *++prx;   // result is 2nd byte of receive buffer
+uint8_t data[5];
+  *data = ( R_REGISTER | ( REGISTER_MASK & reg ) );
+  *(data+1) = NOP ; // Dummy operation, just for reading
+  digitalWrite (csn_pin, LOW);
+  wiringPiSPIDataRW (0, data, 2);
+  digitalWrite (csn_pin, HIGH);
+  result = *(data+1);   // result is 2nd byte of receive buffer
   return (result);
 }
 
 // set the value of a nRF24L01p register
 void nrf24::setRegister(uint8_t reg, uint8_t value)
 {
-  uint8_t * prx = spi_rxbuff;
-  uint8_t * ptx = spi_txbuff;
+  uint8_t * prx = spi_buff;
+  uint8_t * ptx = spi_buff;
 
  *ptx++ = ( W_REGISTER | ( REGISTER_MASK & reg ) );
  *ptx = value ;
-  bcm2835_gpio_write(csn_pin, LOW);
-  bcm2835_spi_transfernb( (char *) spi_txbuff, (char *) spi_rxbuff, 2);
-  bcm2835_gpio_write(csn_pin,HIGH);
+  digitalWrite (10, LOW);
+  wiringPiSPIDataRW (0, spi_buff, 2);
+  digitalWrite (10, HIGH);
 }
 // power up the nRF24L01p chip
 void nrf24::powerUp(void)
-{std::cout << "Running nrf24 powerUp" << std::endl;
+{
+	ceLow();
+	clearInt_RX_DR();
+	flushRx();
+	flushTx();
   setRegister(_NRF24_CONFIG,getRegister(_NRF24_CONFIG)|0x02);
   delayMicroseconds(130);
-std::cout << "Running nrf24 powerUp end" << std::endl;
 }
 
 // switch nRF24L01p off
@@ -160,13 +218,13 @@ void nrf24::powerDown(void)
 // enable RX
 void nrf24::ceHigh(void)
 {
-    bcm2835_gpio_write(ce_pin, HIGH);
+	digitalWrite(ce_pin,HIGH);
 }
 
 // disable RX
 void nrf24::ceLow(void)
 {
-    bcm2835_gpio_write(ce_pin, LOW);
+	digitalWrite(ce_pin,LOW);
 }
 
 // setup RX-Mode of nRF24L01p
@@ -182,24 +240,24 @@ void nrf24::set_address_with(uint8_t aw)
 }
 uint8_t nrf24::getStatus()
 {
-	 *spi_txbuff = NOP;
+	 *spi_buff = NOP;
 
-	  bcm2835_gpio_write(csn_pin, LOW);
-	  bcm2835_spi_transfernb( (char *) spi_txbuff, (char *) spi_rxbuff, 1);
-	  bcm2835_gpio_write(csn_pin,HIGH);
+  digitalWrite (csn_pin, LOW);
+  wiringPiSPIDataRW (0, spi_buff, 1);
+  digitalWrite (csn_pin, HIGH);
 
-    return *spi_rxbuff;
+    return *spi_buff;
 }
 
 byte * nrf24::getAddress(byte * address_buf,byte typ,byte number_of_bytes)
 {
-  uint8_t * ptx = spi_txbuff;
-  uint8_t * prx = spi_rxbuff;
+  uint8_t * ptx = spi_buff;
+  uint8_t * prx = spi_buff;
 
  *ptx = ( R_REGISTER | ( REGISTER_MASK & typ ) );
-  bcm2835_gpio_write(csn_pin, LOW);
-  bcm2835_spi_transfernb( (char *) spi_txbuff, (char *) spi_rxbuff, number_of_bytes+1);
-  bcm2835_gpio_write(csn_pin,HIGH);
+  digitalWrite (csn_pin, LOW);
+  wiringPiSPIDataRW (0, spi_buff, number_of_bytes+1);
+  digitalWrite (csn_pin, HIGH);
   prx++;
   for(int i=0; i<number_of_bytes; ++i) *address_buf++ = *prx++;
   return address_buf;
