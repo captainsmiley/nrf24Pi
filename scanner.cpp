@@ -1,3 +1,4 @@
+/*
 #include <stdint.h>
 #include <stdio.h>
 #include <time.h>
@@ -5,9 +6,11 @@
 #include <sys/time.h>
 #include <stddef.h>
 #include "bcm2835.h"
+*/
 
 #include <iostream>
-
+#include "nrf24.h"
+/*
 //SPI receive buffer (payload max 32 bytes)
 uint8_t spi_rxbuff[32] ;
 //SPI transmit buffer (payload max 32 bytes + 1 byte )
@@ -178,18 +181,42 @@ void setup()
 
   
 }
+*/
 
-void loop() 
-{ 
+void loop(nrf24 & r)
+{
+
+	delay(10);
+	r.ceLow();
+	if(r.getStatus() & 0b01000000)
+	{
+		byte a[32] = {};
+		r.readFIFO(&a[1],1);
+		std::cout << "Received: " << a[1] << std::endl;
+		/*
+		r.readFIFO(&a[1],1);
+		std::cout << "Received: " << a[1] << std::endl;
+		r.readFIFO(a,1);
+		std::cout << "Received: " << a[1] << std::endl;
+		*/
+		r.clearInt_RX_DR();
+   	    r.printStatus();
+	}
+	r.ceHigh();
 
 }
 
 
 int main(int argc, char** argv)
 {
-    setup();
+	std::cout << "Program starting" << std::endl;
+	nrf24 r1;
+
+
+
+    //setup();
     while(1)
-        loop();
+        loop(r1);
 
     return 0;
 }
